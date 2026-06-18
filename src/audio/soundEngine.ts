@@ -43,6 +43,30 @@ function reinterpret(src: any, TypedArray: any) {
   return new TypedArray(buffer);
 }
 
+// Processeur AudioWorklet de capture micro : exécuté dans le thread audio, il
+// accumule les échantillons par blocs de 1024 et les renvoie au thread principal
+// (où vit l'instance ggwave) pour décodage. Fiable sur Safari iOS, contrairement
+// à ScriptProcessorNode. Injecté via un Blob pour éviter un fichier servi à part.
+const WORKLET_SRC = `
+class GgwaveCapture extends AudioWorkletProcessor {
+  constructor() { super(); this._buf = new Float32Array(1024); this._n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) {
+      for (let i = 0; i < ch.length; i++) {
+        this._buf[this._n++] = ch[i];
+        if (this._n === this._buf.length) {
+          this.port.postMessage(this._buf.slice(0));
+          this._n = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('ggwave-capture', GgwaveCapture);
+`;
+
 function createWebEngine(): SoundEngine {
   let ggwave: any = null;
   let instance: any = null;
@@ -52,6 +76,8 @@ function createWebEngine(): SoundEngine {
   let mediaStream: any = null;
   let sourceNode: any = null;
   let processor: any = null;
+  let workletNode: any = null;
+  let workletReady = false;
 
   function loadGgwave(): Promise<any> {
     if (loadPromise) return loadPromise;
@@ -161,13 +187,12 @@ function createWebEngine(): SoundEngine {
           },
         });
         sourceNode = ctx.createMediaStreamSource(mediaStream);
-        processor = ctx.createScriptProcessor(1024, 1, 1);
-        processor.onaudioprocess = (e: any) => {
-          const input = e.inputBuffer.getChannelData(0);
+
+        const decodeChunk = (samples: any) => {
           try {
             const decoded = ggwave.decode(
               instance,
-              reinterpret(new Float32Array(input), Int8Array),
+              reinterpret(new Float32Array(samples), Int8Array),
             );
             if (decoded && decoded.length > 0) {
               const text = new G.TextDecoder('utf-8').decode(decoded);
@@ -177,8 +202,34 @@ function createWebEngine(): SoundEngine {
             // Bruit non décodable : on ignore silencieusement.
           }
         };
-        sourceNode.connect(processor);
-        processor.connect(ctx.destination);
+
+        // AudioWorklet d'abord (fiable partout, dont Safari iOS) ; repli sur
+        // ScriptProcessorNode pour les navigateurs anciens sans worklet.
+        let usingWorklet = false;
+        if (ctx.audioWorklet && G.AudioWorkletNode) {
+          try {
+            if (!workletReady) {
+              const blob = new G.Blob([WORKLET_SRC], { type: 'application/javascript' });
+              await ctx.audioWorklet.addModule(G.URL.createObjectURL(blob));
+              workletReady = true;
+            }
+            workletNode = new G.AudioWorkletNode(ctx, 'ggwave-capture');
+            workletNode.port.onmessage = (e: any) => decodeChunk(e.data);
+            sourceNode.connect(workletNode);
+            workletNode.connect(ctx.destination);
+            usingWorklet = true;
+          } catch {
+            usingWorklet = false;
+          }
+        }
+
+        if (!usingWorklet) {
+          processor = ctx.createScriptProcessor(1024, 1, 1);
+          processor.onaudioprocess = (e: any) =>
+            decodeChunk(e.inputBuffer.getChannelData(0));
+          sourceNode.connect(processor);
+          processor.connect(ctx.destination);
+        }
       } catch (err: any) {
         const message =
           err && err.name === 'NotAllowedError'
@@ -194,6 +245,13 @@ function createWebEngine(): SoundEngine {
         processor.disconnect();
         processor.onaudioprocess = null;
         processor = null;
+      }
+      if (workletNode) {
+        try {
+          workletNode.port.onmessage = null;
+        } catch {}
+        workletNode.disconnect();
+        workletNode = null;
       }
       if (sourceNode) {
         sourceNode.disconnect();

@@ -22,6 +22,27 @@ deux côtés. Autoriser l'accès au micro lorsqu'il est demandé.
 > Le décodage micro temps réel n'existe pas dans Expo Go : utiliser Expo Web (ici)
 > ou, plus tard, un Expo Dev Build Android (module natif ggwave à intégrer).
 
+## Tester sur téléphone (téléphone ↔ PC)
+
+Le navigateur **bloque le micro hors HTTPS**. Pour que le téléphone puisse aussi
+**recevoir**, on sert l'app via un tunnel HTTPS (cloudflared, sans compte).
+
+Dans **deux terminaux** :
+
+```bash
+npm run web        # terminal 1 : démarre l'app sur le port 8081
+npm run tunnel     # terminal 2 : ouvre un tunnel https://<aléatoire>.trycloudflare.com
+```
+
+Ouvrez l'URL `https://…trycloudflare.com` affichée **sur le téléphone** (Chrome/Safari).
+L'app marche alors dans les deux sens : un côté touche « Écouter », l'autre envoie.
+Mode identique des deux côtés, volume ~70 %, pièce calme.
+
+> Variante sans tunnel (sens unique) : sur le même Wi-Fi, ouvrez
+> `http://<ip-du-pc>:8081` sur le téléphone — il peut **émettre** vers le PC
+> (qui écoute sur localhost), mais pas recevoir (micro bloqué en http).
+> Expo Go ne convient pas (pas de micro temps réel).
+
 ## Architecture
 
 ```
