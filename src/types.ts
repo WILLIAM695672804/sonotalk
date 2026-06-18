@@ -11,4 +11,7 @@ export interface Message {
   nick?: string;
   via: 'sound' | 'local';
   ts: number;
+  // 'error' : signal capté mais illisible (F-13 / CA-06). Affiché comme une
+  // carte d'erreur, jamais comme du texte brut.
+  kind?: 'text' | 'error';
 }

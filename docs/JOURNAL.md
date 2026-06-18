@@ -67,3 +67,38 @@ pas être automatisé sans micro réel.
 4. Fenêtre A (émetteur) : taper un message court, **envoyer**.
 5. Attendu : le message apparaît dans B comme reçu (les sessionId distincts évitent
    que B prenne le signal pour son propre écho).
+
+---
+
+## 2026-06-18 — Partie web complétée (F-13, F-17, F-18)
+
+### Ajouté
+- **F-13** (erreur de réception lisible) — tout signal décodé qui n'a pas la structure
+  attendue (sessionId · pseudo · texte), tronqué, ou contenant des octets corrompus
+  (U+FFFD), s'affiche comme une **carte d'erreur** rouge — jamais en charabia.
+  Satisfait CA-06.
+- **F-17** (écran d'aide) — 4 étapes + « C'est parti », accessible par l'icône « ? »
+  de l'en-tête.
+- **F-18** (rejouer) — icône sur chaque message envoyé pour ré-émettre son audio,
+  sans créer de nouvelle bulle.
+
+### Vérifié
+- `tsc` 0 erreur ; écran d'aide + carte d'erreur présents dans le bundle.
+- L'écran d'aide s'affiche, l'icône « rejouer » est sur les bulles envoyées, l'envoi
+  fonctionne, 0 erreur console.
+- Logique F-13 testée : message valide → affiché ; source étrangère / tronqué /
+  corrompu → carte d'erreur.
+
+### Critères d'acceptation (web)
+- ✅ **CA-03, CA-04, CA-05, CA-06, CA-07** remplis.
+- ⏳ **CA-01, CA-02** : dépendent du seul test non automatisable — le passage
+  physique haut-parleur → air → micro, à valider sur matériel réel.
+
+### Reste (confort, *Could*, hors critères)
+- F-19 (thème sombre) : refactor d'un contexte de thème — reporté.
+- F-16 (ACK sonore) : risque de boucle audio — écarté pour l'instant.
+- F-15 : forme d'onde animée présente, spectre temps réel non.
+
+**Conclusion :** la partie web est complète au sens des *Must* + *Should*, et les
+5 critères d'acceptation codables sont remplis. Les 2 derniers (CA-01/CA-02) ne
+tiennent plus qu'au test acoustique physique.

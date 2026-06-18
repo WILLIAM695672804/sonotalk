@@ -18,6 +18,7 @@ export interface SoundMessaging {
   progress: number;
   ready: boolean;
   send: (text: string) => Promise<void>;
+  replay: (text: string) => Promise<void>;
   toggleListening: () => Promise<void>;
 }
 
@@ -48,14 +49,24 @@ export function useSoundMessaging(
   const modeRef = useRef(mode);
   const speedRef = useRef(speed);
   const listeningRef = useRef(false);
+  const statusRef = useRef<Status>('idle');
   const revertTimer = useRef<any>(null);
 
   useEffect(() => { nickRef.current = nick; }, [nick]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { speedRef.current = speed; }, [speed]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const idleLabel = () => (listeningRef.current ? 'À l’écoute…' : 'Prêt');
   const idleStatus = (): Status => (listeningRef.current ? 'listening' : 'idle');
+
+  const revertSoon = (delay: number) => {
+    if (revertTimer.current) clearTimeout(revertTimer.current);
+    revertTimer.current = setTimeout(() => {
+      setStatus(idleStatus());
+      setStatusText(idleLabel());
+    }, delay);
+  };
 
   const handleMessage = useCallback((raw: string) => {
     // Charge utile : sessionId · pseudo · texte (texte peut contenir des SEP).
@@ -66,7 +77,33 @@ export function useSoundMessaging(
 
     // Notre propre émission captée par notre micro → on ignore.
     if (sid === sessionId) return;
-    if (!text) return;
+
+    // F-13 / CA-06 : ne jamais afficher de charabia. Un message qui n'a pas
+    // notre structure (sessionId · pseudo · texte) ou qui contient le caractère
+    // de remplacement Unicode (décodage partiel) est signalé comme illisible.
+    const isReadable = parts.length >= 3 && text.length > 0 && !text.includes('�');
+    if (!isReadable) {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        // Anti-doublon : un même échec répété en rafale n'empile pas les cartes.
+        if (last && last.kind === 'error' && Date.now() - last.ts < 2500) return prev;
+        return [
+          ...prev,
+          {
+            id: newId(),
+            text: 'Signal capté mais non décodé — trop de bruit, appareils trop éloignés, ou source inconnue.',
+            sender: 'them',
+            via: 'sound',
+            ts: Date.now(),
+            kind: 'error',
+          },
+        ];
+      });
+      setStatus('error');
+      setStatusText('Message illisible');
+      revertSoon(2200);
+      return;
+    }
 
     setMessages((prev) => [
       ...prev,
@@ -77,41 +114,23 @@ export function useSoundMessaging(
         nick: inNick || undefined,
         via: 'sound',
         ts: Date.now(),
+        kind: 'text',
       },
     ]);
 
     setStatus('success');
     setStatusText('Message reçu');
-    if (revertTimer.current) clearTimeout(revertTimer.current);
-    revertTimer.current = setTimeout(() => {
-      setStatus(idleStatus());
-      setStatusText(idleLabel());
-    }, 1400);
+    revertSoon(1400);
   }, []);
 
-  const send = useCallback(
+  // Émission audio, commune à l'envoi et au « rejouer ».
+  const emit = useCallback(
     async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: newId(),
-          text: trimmed,
-          sender: 'me',
-          nick: nickRef.current,
-          via: 'sound',
-          ts: Date.now(),
-        },
-      ]);
-
       setStatus('emitting');
       setStatusText('Émission en cours…');
       setProgress(0);
-
       try {
-        const payload = `${sessionId}${SEP}${nickRef.current}${SEP}${trimmed}`;
+        const payload = `${sessionId}${SEP}${nickRef.current}${SEP}${text}`;
         await engine.send(payload, modeRef.current, speedRef.current, setProgress);
         setStatus(idleStatus());
         setStatusText(idleLabel());
@@ -122,7 +141,37 @@ export function useSoundMessaging(
         setProgress(0);
       }
     },
-    [engine],
+    [engine, sessionId],
+  );
+
+  const send = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: newId(),
+          text: trimmed,
+          sender: 'me',
+          nick: nickRef.current,
+          via: 'sound',
+          ts: Date.now(),
+          kind: 'text',
+        },
+      ]);
+      await emit(trimmed);
+    },
+    [emit],
+  );
+
+  // Rejoue le son d'un message déjà émis, sans créer de nouvelle bulle (F-18).
+  const replay = useCallback(
+    async (text: string) => {
+      if (statusRef.current === 'emitting') return;
+      await emit(text);
+    },
+    [emit],
   );
 
   const toggleListening = useCallback(async () => {
@@ -157,5 +206,5 @@ export function useSoundMessaging(
     };
   }, [engine]);
 
-  return { messages, status, statusText, listening, progress, ready, send, toggleListening };
+  return { messages, status, statusText, listening, progress, ready, send, replay, toggleListening };
 }

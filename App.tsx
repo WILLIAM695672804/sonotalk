@@ -2,11 +2,12 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
 import { Platform, StatusBar as RNStatusBar, StyleSheet, View } from 'react-native';
 import { ConversationScreen } from './src/screens/ConversationScreen';
+import { HelpScreen } from './src/screens/HelpScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { colors } from './src/theme';
 import { SoundMode, Speed } from './src/types';
 
-type Screen = 'chat' | 'settings';
+type Screen = 'chat' | 'settings' | 'help';
 
 const TOP_INSET =
   Platform.OS === 'android' ? RNStatusBar.currentHeight ?? 24 : Platform.OS === 'ios' ? 44 : 0;
@@ -27,8 +28,9 @@ export default function App() {
             speed={speed}
             onChangeMode={setMode}
             onOpenSettings={() => setScreen('settings')}
+            onOpenHelp={() => setScreen('help')}
           />
-        ) : (
+        ) : screen === 'settings' ? (
           <SettingsScreen
             nick={nick}
             mode={mode}
@@ -38,6 +40,8 @@ export default function App() {
             onChangeSpeed={setSpeed}
             onClose={() => setScreen('chat')}
           />
+        ) : (
+          <HelpScreen onClose={() => setScreen('chat')} />
         )}
       </View>
       <StatusBar style="dark" />

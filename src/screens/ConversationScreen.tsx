@@ -24,10 +24,18 @@ interface Props {
   speed: Speed;
   onChangeMode: (mode: SoundMode) => void;
   onOpenSettings: () => void;
+  onOpenHelp: () => void;
 }
 
-export function ConversationScreen({ nick, mode, speed, onChangeMode, onOpenSettings }: Props) {
-  const { messages, status, statusText, listening, progress, ready, send, toggleListening } =
+export function ConversationScreen({
+  nick,
+  mode,
+  speed,
+  onChangeMode,
+  onOpenSettings,
+  onOpenHelp,
+}: Props) {
+  const { messages, status, statusText, listening, progress, ready, send, replay, toggleListening } =
     useSoundMessaging(nick, mode, speed);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -48,14 +56,24 @@ export function ConversationScreen({ nick, mode, speed, onChangeMode, onOpenSett
             mode {mode === 'audible' ? 'audible' : 'ultrason'} · {speed === 'fast' ? 'rapide' : 'normal'}
           </Text>
         </View>
-        <Pressable
-          onPress={onOpenSettings}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel="Réglages"
-        >
-          <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            onPress={onOpenHelp}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Aide"
+          >
+            <Ionicons name="help-circle-outline" size={23} color={colors.textSecondary} />
+          </Pressable>
+          <Pressable
+            onPress={onOpenSettings}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Réglages"
+          >
+            <Ionicons name="settings-outline" size={22} color={colors.textSecondary} />
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.modeBar}>
@@ -75,7 +93,7 @@ export function ConversationScreen({ nick, mode, speed, onChangeMode, onOpenSett
             contentContainerStyle={styles.listContent}
           >
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
+              <MessageBubble key={m.id} message={m} onReplay={replay} />
             ))}
           </ScrollView>
         )}
@@ -129,6 +147,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   avatar: {
     width: 34,
     height: 34,
