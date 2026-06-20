@@ -4,6 +4,7 @@ import { Platform, StatusBar as RNStatusBar, StyleSheet, View } from 'react-nati
 import { ConversationScreen } from './src/screens/ConversationScreen';
 import { HelpScreen } from './src/screens/HelpScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { SoundBridge } from './src/audio/SoundBridge';
 import { colors } from './src/theme';
 import { SoundMode, Speed } from './src/types';
 
@@ -44,6 +45,8 @@ export default function App() {
           <HelpScreen onClose={() => setScreen('chat')} />
         )}
       </View>
+      {/* WebView audio cachée (Android) ; null sur le web. */}
+      <SoundBridge />
       <StatusBar style="dark" />
     </View>
   );

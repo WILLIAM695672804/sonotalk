@@ -9,19 +9,9 @@
 
 import { Platform } from 'react-native';
 import { SoundMode, Speed } from '../types';
+import { SoundEngine } from './soundEngineTypes';
 
-type ProgressCb = (ratio: number) => void;
-type MessageCb = (text: string) => void;
-type ErrorCb = (message: string) => void;
-
-export interface SoundEngine {
-  isSupported(): boolean;
-  prepare(): Promise<void>;
-  send(text: string, mode: SoundMode, speed: Speed, onProgress?: ProgressCb): Promise<void>;
-  startListening(onMessage: MessageCb, onError?: ErrorCb): Promise<void>;
-  stopListening(): void;
-  destroy(): void;
-}
+export type { SoundEngine } from './soundEngineTypes';
 
 // Accès aux globals navigateur sans dépendre de la lib DOM côté TypeScript.
 const G: any = typeof globalThis !== 'undefined' ? globalThis : {};

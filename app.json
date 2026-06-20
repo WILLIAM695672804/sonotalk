@@ -10,6 +10,11 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.williamfondjo.sonotalk",
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -20,6 +25,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "aa475328-140c-40ba-b4da-a7b662066bf3"
+      }
+    },
+    "owner": "william695672804"
   }
 }
