@@ -7,16 +7,12 @@
 //
 // Le composant <NativeSoundBridge/> est monté une seule fois dans App.tsx.
 
-import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { GGWAVE_BASE64 } from './ggwaveSource';
 import { ErrorCb, MessageCb, ProgressCb } from './soundEngineTypes';
 import { SoundMode, Speed } from '../types';
-
-// Panneau de diagnostic à l'écran (logs de la WebView). À repasser à false une
-// fois le son validé sur appareil.
-const DEBUG = true;
 
 // ---------------------------------------------------------------------------
 // Singleton de pont
@@ -357,7 +353,6 @@ const HTML = `<!doctype html><html><head><meta charset="utf-8">
 
 export function NativeSoundBridge() {
   const ref = useRef<WebView>(null);
-  const [logs, setLogs] = useState<string[]>([]);
 
   useEffect(() => {
     nativeBridge.register((cmd) => {
@@ -366,48 +361,24 @@ export function NativeSoundBridge() {
     return () => nativeBridge.unregister();
   }, []);
 
-  useEffect(() => (DEBUG ? nativeBridge.subscribeLogs(setLogs) : undefined), []);
-
   return (
-    <>
-      <View style={styles.hidden} pointerEvents="none">
-        <WebView
-          ref={ref}
-          source={{ html: HTML, baseUrl: 'https://localhost/' }}
-          originWhitelist={['*']}
-          injectedJavaScript={IN_WEBVIEW_JS}
-          onMessage={(e) => nativeBridge.handleWebMessage(e.nativeEvent.data)}
-          mediaPlaybackRequiresUserAction={false}
-          mediaCapturePermissionGrantType="grant"
-          allowsInlineMediaPlayback
-          javaScriptEnabled
-          domStorageEnabled
-        />
-      </View>
-      {DEBUG ? (
-        <View style={styles.debug} pointerEvents="none">
-          <ScrollView>
-            {logs.map((l, i) => (
-              <Text key={i} style={styles.debugLine}>{l}</Text>
-            ))}
-          </ScrollView>
-        </View>
-      ) : null}
-    </>
+    <View style={styles.hidden} pointerEvents="none">
+      <WebView
+        ref={ref}
+        source={{ html: HTML, baseUrl: 'https://localhost/' }}
+        originWhitelist={['*']}
+        injectedJavaScript={IN_WEBVIEW_JS}
+        onMessage={(e) => nativeBridge.handleWebMessage(e.nativeEvent.data)}
+        mediaPlaybackRequiresUserAction={false}
+        mediaCapturePermissionGrantType="grant"
+        allowsInlineMediaPlayback
+        javaScriptEnabled
+        domStorageEnabled
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   hidden: { position: 'absolute', width: 1, height: 1, opacity: 0 },
-  debug: {
-    position: 'absolute',
-    left: 4,
-    right: 4,
-    top: 90,
-    maxHeight: 220,
-    backgroundColor: 'rgba(0,0,0,0.78)',
-    borderRadius: 8,
-    padding: 6,
-  },
-  debugLine: { color: '#7CFC00', fontSize: 9, fontFamily: 'monospace', lineHeight: 12 },
 });
