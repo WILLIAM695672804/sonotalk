@@ -3,23 +3,23 @@
 // native ; seuls l'encodage/décodage et l'accès micro/haut-parleur passent par
 // la WebView (qui dispose de la Web Audio API, absente côté React Native pur).
 //
-// Architecture :
-//   soundEngine.native.ts  →  bridge (ce module, singleton)  →  <NativeSoundBridge/>
-//   (WebView). Les commandes (prepare/send/listen) sont postées dans la WebView ;
-//   les résultats (progression, message décodé, erreurs) remontent via onMessage.
+//   soundEngine.native.ts  →  nativeBridge (singleton)  →  <NativeSoundBridge/> (WebView)
 //
 // Le composant <NativeSoundBridge/> est monté une seule fois dans App.tsx.
 
-import React, { useEffect, useRef } from 'react';
-import { View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { GGWAVE_BASE64 } from './ggwaveSource';
 import { ErrorCb, MessageCb, ProgressCb } from './soundEngineTypes';
 import { SoundMode, Speed } from '../types';
 
+// Panneau de diagnostic à l'écran (logs de la WebView). À repasser à false une
+// fois le son validé sur appareil.
+const DEBUG = true;
+
 // ---------------------------------------------------------------------------
-// Singleton de pont : la WebView s'y enregistre au montage ; le moteur natif
-// (soundEngine.native.ts) lui envoie des commandes et reçoit les résultats.
+// Singleton de pont
 // ---------------------------------------------------------------------------
 
 type Command =
@@ -46,10 +46,26 @@ class NativeBridge {
   private onMessage: MessageCb | null = null;
   private onError: ErrorCb | null = null;
 
-  // Appelé par <NativeSoundBridge/> au montage de la WebView.
+  // Diagnostic
+  logs: string[] = [];
+  private logSub: ((logs: string[]) => void) | null = null;
+
+  private pushLog(line: string) {
+    const stamp = new Date().toISOString().slice(11, 19);
+    this.logs = [...this.logs.slice(-40), `${stamp} ${line}`];
+    if (this.logSub) this.logSub(this.logs);
+  }
+  subscribeLogs(cb: (logs: string[]) => void) {
+    this.logSub = cb;
+    cb(this.logs);
+    return () => {
+      if (this.logSub === cb) this.logSub = null;
+    };
+  }
+
   register(post: (cmd: Command) => void) {
     this.post = post;
-    // Rejoue les commandes accumulées avant que la WebView soit prête.
+    this.pushLog('[RN] WebView prête, ' + this.queue.length + ' cmd en file');
     const pending = this.queue;
     this.queue = [];
     pending.forEach((c) => post(c));
@@ -61,6 +77,7 @@ class NativeBridge {
   }
 
   private send(cmd: Command) {
+    this.pushLog('[RN→WV] ' + cmd.type);
     if (this.post) this.post(cmd);
     else this.queue.push(cmd);
   }
@@ -94,7 +111,6 @@ class NativeBridge {
     this.send({ type: 'stopListening' });
   }
 
-  // Messages remontés depuis la WebView (JSON).
   handleWebMessage(raw: string) {
     let msg: any;
     try {
@@ -102,13 +118,16 @@ class NativeBridge {
     } catch {
       return;
     }
+    if (msg.type === 'log') {
+      this.pushLog('[WV] ' + msg.text);
+      return;
+    }
     switch (msg.type) {
-      case 'ready': {
+      case 'ready':
         this.prepared = true;
         this.prepareWaiters.forEach((w) => w.resolve());
         this.prepareWaiters = [];
         break;
-      }
       case 'prepareError': {
         const err = new Error(msg.message || 'Initialisation audio impossible.');
         this.prepareWaiters.forEach((w) => w.reject(err));
@@ -136,17 +155,15 @@ class NativeBridge {
         }
         break;
       }
-      case 'listening': {
+      case 'listening':
         if (this.listenAck) {
           this.listenAck.resolve();
           this.listenAck = null;
         }
         break;
-      }
-      case 'message': {
+      case 'message':
         if (this.onMessage && typeof msg.text === 'string') this.onMessage(msg.text);
         break;
-      }
       case 'listenError': {
         const message = msg.message || 'Micro indisponible.';
         if (this.listenAck) {
@@ -163,21 +180,30 @@ class NativeBridge {
 export const nativeBridge = new NativeBridge();
 
 // ---------------------------------------------------------------------------
-// Code exécuté DANS la WebView. ggwave (base64) y est décodé puis évalué, et
-// la logique encode/décode reprend celle de soundEngine.ts (Web Audio API,
-// AudioWorklet de capture). Aucune dépendance réseau → offline (NF-04).
+// Code exécuté DANS la WebView (logique encode/décode reprise de soundEngine.ts).
+// console.* et erreurs sont renvoyés à RN via {type:'log'} pour le diagnostic.
 // ---------------------------------------------------------------------------
 
 const IN_WEBVIEW_JS = `
 (function () {
   var RN = window.ReactNativeWebView;
-  function reply(obj) { RN && RN.postMessage(JSON.stringify(obj)); }
+  function reply(obj) { try { RN && RN.postMessage(JSON.stringify(obj)); } catch (e) {} }
+  function log(s) { reply({ type: 'log', text: String(s) }); }
 
-  // -- Charge ggwave (UMD single-file) depuis le base64 injecté --------------
+  window.onerror = function (m, src, l, c) { log('window.onerror: ' + m + ' @' + l + ':' + c); };
+  ['log','warn','error'].forEach(function (k) {
+    var orig = console[k];
+    console[k] = function () { try { log(k + ': ' + Array.prototype.join.call(arguments, ' ')); } catch (e) {} orig && orig.apply(console, arguments); };
+  });
+
+  log('boot secure=' + window.isSecureContext + ' md=' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) + ' url=' + location.href);
+
   try {
-    var src = decodeURIComponent(escape(atob(window.__GGWAVE_B64__)));
+    var src = atob(window.__GGWAVE_B64__);
     (0, eval)(src);
+    log('ggwave eval ok, factory=' + (typeof window.ggwave_factory));
   } catch (e) {
+    log('ggwave eval FAIL: ' + (e && e.message));
     reply({ type: 'prepareError', message: 'ggwave illisible: ' + (e && e.message) });
   }
 
@@ -195,23 +221,25 @@ const IN_WEBVIEW_JS = `
   function ensureReady() {
     return new Promise(function (resolve, reject) {
       try {
-        if (!ctx) { var AC = window.AudioContext || window.webkitAudioContext; ctx = new AC(); }
+        if (!ctx) { var AC = window.AudioContext || window.webkitAudioContext; ctx = new AC(); log('AudioContext sr=' + ctx.sampleRate + ' state=' + ctx.state); }
         var resumed = ctx.state === 'suspended' ? ctx.resume() : Promise.resolve();
         resumed.then(function () {
+          log('ctx.state=' + ctx.state);
           function fin() {
             if (!instance) {
               var p = ggwave.getDefaultParameters();
               p.sampleRateInp = ctx.sampleRate; p.sampleRateOut = ctx.sampleRate;
               instance = ggwave.init(p);
+              log('ggwave instance ok');
             }
             resolve();
           }
           if (ggwave) return fin();
-          var f = window.ggwave_factory || window.ggwave;
+          var f = window.ggwave_factory;
           if (!f) return reject(new Error('ggwave_factory absent'));
-          f().then(function (g) { ggwave = g; fin(); }).catch(reject);
-        }).catch(reject);
-      } catch (e) { reject(e); }
+          f().then(function (g) { ggwave = g; log('factory resolved'); fin(); }).catch(function (e) { log('factory FAIL ' + (e && e.message)); reject(e); });
+        }).catch(function (e) { log('resume FAIL ' + (e && e.message)); reject(e); });
+      } catch (e) { log('ensureReady throw ' + (e && e.message)); reject(e); }
     });
   }
 
@@ -223,10 +251,12 @@ const IN_WEBVIEW_JS = `
   }
 
   function doSend(cmd) {
+    log('doSend "' + cmd.text + '" ' + cmd.mode + '/' + cmd.speed);
     ensureReady().then(function () {
       var protocol = protocolFor(cmd.mode, cmd.speed);
       var encoded = ggwave.encode(instance, cmd.text, protocol, 10);
       var samples = reinterpret(encoded, Float32Array);
+      log('encoded samples=' + samples.length);
       var buf = ctx.createBuffer(1, samples.length, ctx.sampleRate);
       buf.getChannelData(0).set(samples);
       var node = ctx.createBufferSource();
@@ -238,9 +268,10 @@ const IN_WEBVIEW_JS = `
         reply({ type: 'progress', id: cmd.id, ratio: ratio });
         if (ratio < 1) raf = requestAnimationFrame(tick);
       }
-      node.onended = function () { cancelAnimationFrame(raf); reply({ type: 'progress', id: cmd.id, ratio: 1 }); reply({ type: 'sent', id: cmd.id }); };
+      node.onended = function () { cancelAnimationFrame(raf); log('send ended'); reply({ type: 'progress', id: cmd.id, ratio: 1 }); reply({ type: 'sent', id: cmd.id }); };
       node.start(); tick();
-    }).catch(function (e) { reply({ type: 'sendError', id: cmd.id, message: (e && e.message) || 'Echec emission' }); });
+      log('node.start (duree ' + Math.round(durationMs) + 'ms)');
+    }).catch(function (e) { log('doSend FAIL ' + (e && e.message)); reply({ type: 'sendError', id: cmd.id, message: (e && e.message) || 'Echec emission' }); });
   }
 
   function decodeChunk(samples) {
@@ -248,18 +279,20 @@ const IN_WEBVIEW_JS = `
       var decoded = ggwave.decode(instance, reinterpret(new Float32Array(samples), Int8Array));
       if (decoded && decoded.length > 0) {
         var text = new TextDecoder('utf-8').decode(decoded);
-        if (text) reply({ type: 'message', text: text });
+        if (text) { log('decoded "' + text + '"'); reply({ type: 'message', text: text }); }
       }
     } catch (e) { /* bruit non décodable : ignoré */ }
   }
 
   function doStartListening() {
+    log('doStartListening');
     ensureReady().then(function () {
       return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false } });
     }).then(function (stream) {
+      log('getUserMedia ok');
       mediaStream = stream;
       sourceNode = ctx.createMediaStreamSource(stream);
-      function finish() { reply({ type: 'listening' }); }
+      function finish() { log('listening (worklet=' + workletReady + ')'); reply({ type: 'listening' }); }
       if (ctx.audioWorklet && window.AudioWorkletNode) {
         var go = workletReady ? Promise.resolve() : ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' })));
         go.then(function () {
@@ -268,7 +301,8 @@ const IN_WEBVIEW_JS = `
           workletNode.port.onmessage = function (e) { decodeChunk(e.data); };
           sourceNode.connect(workletNode); workletNode.connect(ctx.destination);
           finish();
-        }).catch(function () {
+        }).catch(function (e) {
+          log('worklet FAIL, fallback ScriptProcessor: ' + (e && e.message));
           processor = ctx.createScriptProcessor(1024, 1, 1);
           processor.onaudioprocess = function (e) { decodeChunk(e.inputBuffer.getChannelData(0)); };
           sourceNode.connect(processor); processor.connect(ctx.destination);
@@ -282,11 +316,13 @@ const IN_WEBVIEW_JS = `
       }
     }).catch(function (e) {
       var m = (e && e.name === 'NotAllowedError') ? 'Acces au micro refuse.' : ((e && e.message) || 'Micro indisponible.');
+      log('getUserMedia FAIL ' + (e && e.name) + ' ' + (e && e.message));
       reply({ type: 'listenError', message: m });
     });
   }
 
   function doStopListening() {
+    log('doStopListening');
     if (processor) { processor.disconnect(); processor.onaudioprocess = null; processor = null; }
     if (workletNode) { try { workletNode.port.onmessage = null; } catch (e) {} workletNode.disconnect(); workletNode = null; }
     if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
@@ -294,6 +330,7 @@ const IN_WEBVIEW_JS = `
   }
 
   function handle(cmd) {
+    log('cmd recv: ' + cmd.type);
     if (cmd.type === 'prepare') ensureReady().then(function () { reply({ type: 'ready' }); }).catch(function (e) { reply({ type: 'prepareError', message: (e && e.message) || 'init' }); });
     else if (cmd.type === 'send') doSend(cmd);
     else if (cmd.type === 'startListening') doStartListening();
@@ -306,7 +343,6 @@ const IN_WEBVIEW_JS = `
     var cmd; try { cmd = JSON.parse(data); } catch (e) { return; }
     handle(cmd);
   }
-  // react-native-webview poste sur window (et document selon les versions).
   window.addEventListener('message', onMsg);
   document.addEventListener('message', onMsg);
 
@@ -321,6 +357,7 @@ const HTML = `<!doctype html><html><head><meta charset="utf-8">
 
 export function NativeSoundBridge() {
   const ref = useRef<WebView>(null);
+  const [logs, setLogs] = useState<string[]>([]);
 
   useEffect(() => {
     nativeBridge.register((cmd) => {
@@ -329,23 +366,48 @@ export function NativeSoundBridge() {
     return () => nativeBridge.unregister();
   }, []);
 
+  useEffect(() => (DEBUG ? nativeBridge.subscribeLogs(setLogs) : undefined), []);
+
   return (
-    // Hors écran mais monté (une WebView de taille nulle peut être désactivée).
-    <View style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }} pointerEvents="none">
-      <WebView
-        ref={ref}
-        // baseUrl https → origine considérée sécurisée, requise par getUserMedia.
-        source={{ html: HTML, baseUrl: 'https://localhost/' }}
-        originWhitelist={['*']}
-        injectedJavaScript={IN_WEBVIEW_JS}
-        onMessage={(e) => nativeBridge.handleWebMessage(e.nativeEvent.data)}
-        // Autorise lecture audio et capture micro sans geste utilisateur.
-        mediaPlaybackRequiresUserAction={false}
-        mediaCapturePermissionGrantType="grant"
-        allowsInlineMediaPlayback
-        javaScriptEnabled
-        domStorageEnabled
-      />
-    </View>
+    <>
+      <View style={styles.hidden} pointerEvents="none">
+        <WebView
+          ref={ref}
+          source={{ html: HTML, baseUrl: 'https://localhost/' }}
+          originWhitelist={['*']}
+          injectedJavaScript={IN_WEBVIEW_JS}
+          onMessage={(e) => nativeBridge.handleWebMessage(e.nativeEvent.data)}
+          mediaPlaybackRequiresUserAction={false}
+          mediaCapturePermissionGrantType="grant"
+          allowsInlineMediaPlayback
+          javaScriptEnabled
+          domStorageEnabled
+        />
+      </View>
+      {DEBUG ? (
+        <View style={styles.debug} pointerEvents="none">
+          <ScrollView>
+            {logs.map((l, i) => (
+              <Text key={i} style={styles.debugLine}>{l}</Text>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+    </>
   );
 }
+
+const styles = StyleSheet.create({
+  hidden: { position: 'absolute', width: 1, height: 1, opacity: 0 },
+  debug: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    top: 90,
+    maxHeight: 220,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    borderRadius: 8,
+    padding: 6,
+  },
+  debugLine: { color: '#7CFC00', fontSize: 9, fontFamily: 'monospace', lineHeight: 12 },
+});

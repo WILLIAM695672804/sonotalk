@@ -1,13 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
+  Keyboard,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Composer } from '../components/Composer';
 import { MessageBubble } from '../components/MessageBubble';
 import { ModeToggle } from '../components/ModeToggle';
@@ -37,6 +39,23 @@ export function ConversationScreen({
   const { messages, status, statusText, listening, progress, ready, send, replay, toggleListening } =
     useSoundMessaging(nick, mode, speed);
   const scrollRef = useRef<ScrollView>(null);
+  const insets = useSafeAreaInsets();
+
+  // Suivi manuel du clavier : en mode edge-to-edge (SDK 56) la fenêtre ne se
+  // redimensionne pas, donc on remonte nous-mêmes la zone de saisie. Clavier
+  // fermé → on respecte l'inset de la barre de navigation système.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const h = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      s.remove();
+      h.remove();
+    };
+  }, []);
+  const bottomPad = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
 
   useEffect(() => {
     const t = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
@@ -79,10 +98,7 @@ export function ConversationScreen({
         <ModeToggle mode={mode} onChange={onChangeMode} compact />
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior="padding"
-      >
+      <View style={styles.body}>
         {messages.length === 0 ? (
           <EmptyState ready={ready} listening={listening} />
         ) : (
@@ -111,8 +127,10 @@ export function ConversationScreen({
           onToggleListen={toggleListening}
         />
 
-        <Composer onSend={send} disabled={status === 'emitting' || !ready} />
-      </KeyboardAvoidingView>
+        <View style={{ paddingBottom: bottomPad }}>
+          <Composer onSend={send} disabled={status === 'emitting' || !ready} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -165,6 +183,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
 
+  body: { flex: 1 },
   list: { flex: 1 },
   listContent: { padding: 14, paddingBottom: 18 },
 

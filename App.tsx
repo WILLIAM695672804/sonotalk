@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import React, { useState } from 'react';
-import { Platform, StatusBar as RNStatusBar, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConversationScreen } from './src/screens/ConversationScreen';
 import { HelpScreen } from './src/screens/HelpScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -10,10 +11,8 @@ import { SoundMode, Speed } from './src/types';
 
 type Screen = 'chat' | 'settings' | 'help';
 
-const TOP_INSET =
-  Platform.OS === 'android' ? RNStatusBar.currentHeight ?? 24 : Platform.OS === 'ios' ? 44 : 0;
-
-export default function App() {
+function AppContent() {
+  const insets = useSafeAreaInsets();
   const [screen, setScreen] = useState<Screen>('chat');
   const [nick, setNick] = useState('Moi');
   const [mode, setMode] = useState<SoundMode>('audible');
@@ -21,7 +20,7 @@ export default function App() {
 
   return (
     <View style={styles.outer}>
-      <View style={[styles.frame, { paddingTop: TOP_INSET }]}>
+      <View style={[styles.frame, { paddingTop: insets.top }]}>
         {screen === 'chat' ? (
           <ConversationScreen
             nick={nick}
@@ -49,6 +48,14 @@ export default function App() {
       <SoundBridge />
       <StatusBar style="dark" />
     </View>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
   );
 }
 
